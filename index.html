@@ -272,8 +272,6 @@
       <button class="btn" id="rel" aria-pressed="false" disabled>Relative</button>
       <button class="btn" id="resetStats" disabled>Reset</button>
       <span class="spacer"></span>
-      <label class="ctl">Interval <input type="number" id="interval" value="250" min="50" max="5000" step="50"> ms</label>
-      <button class="btn" id="pause" disabled>Pause</button>
       <button class="btn" id="export" disabled>Export CSV</button>
     </div>
     <div class="controls" style="margin-top: 10px;">
@@ -285,7 +283,6 @@
     <summary>Diagnostics</summary>
     <div class="diag-body">
       <div class="controls">
-        <label class="ctl"><input type="checkbox" id="lead06" checked> Send leading <code>0x06</code></label>
         <button class="btn" id="disconnect" disabled>Disconnect</button>
       </div>
 
@@ -315,14 +312,12 @@
 
 const VENDOR_ID = 0x1a86;
 const PRODUCT_ID = 0xe429;
-const REPORT_LEN = 64;
+const STALE_MS = 3000;          // no reading for this long marks the display stale
 const MAX_SAMPLES = 50000;      // bounded so a forgotten tab cannot grow without limit
 
-// Meter-level request, identical to requestData in mwuertinger/ut61ep. The
-// leading 0x06 is a byte count for the 6 bytes after it -- confirmed required
-// on the CH9329. The cable answers with the same convention, prefixing its
-// reply with 0x13 (19 bytes).
-const REQUEST = [0xab, 0xcd, 0x03, 0x5e, 0x01, 0xd9];
+// Nothing is ever sent to the meter: once it is on, the CH9329 cable streams
+// readings unprompted, even straight after a power cycle. Each one arrives
+// prefixed with the cable's byte count, 0x13 (19 bytes).
 
 // --- Protocol, ported from parseMessage in ut61ep.go ----------------------
 
@@ -515,13 +510,11 @@ const els = {};
 for (const id of ["status", "readout", "modeBadge", "holdBadge", "relBadge",
   "digits", "unit", "rangeOut", "rateOut", "countOut", "statMin", "statMax",
   "statAvg", "statSpan", "chartUnit", "windows", "plot", "chart", "tip",
-  "hold", "rel", "resetStats", "interval", "pause", "export", "connect",
+  "hold", "rel", "resetStats", "export", "connect",
   "yMode", "yFields", "yLo", "yHi", "yUnit", "freeze",
-  "lead06", "disconnect", "hex", "align", "skipped", "log"]) els[id] = document.getElementById(id);
+  "disconnect", "hex", "align", "skipped", "log"]) els[id] = document.getElementById(id);
 
 let device = null;
-let timer = null;
-let paused = false;
 let latest = null;        // last parsed report
 let heldFrame = null;     // snapshot shown while Hold is on
 let relRef = null;        // relative-mode reference, in base units
@@ -535,7 +528,7 @@ let yLo = null, yHi = null;   // fixed bounds, in the units currently displayed
 let frozenAt = null;      // when set, the chart holds this instant; recording continues
 const ZERO_RUN_MIN = 3;   // consecutive exact zeros before a run is marked
 let recvTimes = [];
-let sentCount = 0, recvCount = 0, lastReportAt = 0;
+let recvCount = 0, lastReportAt = 0, connectedAt = 0;
 let skippedCount = 0, skippedSample = null;
 let needsDraw = false;
 
@@ -973,45 +966,19 @@ function renderAlignment(s) {
   els.align.className = "align";
 }
 
-function buildRequest() {
-  const req = new Uint8Array(REPORT_LEN);
-  req.set(els.lead06.checked ? [0x06].concat(REQUEST) : REQUEST);
-  return req;
-}
-
-async function poll() {
-  if (!device || !device.opened || paused) return;
-  try {
-    await device.sendReport(0x00, buildRequest());
-    sentCount++;
-    if (sentCount >= 5 && recvCount === 0) {
-      setStatus("Requests sent, no reply — is the meter switched on?", "warn");
-    } else if (recvCount > 0 && Date.now() - lastReportAt > 3000) {
-      els.readout.classList.add("stale");
-      setStatus("No recent data", "warn");
-    } else if (recvCount > 0) {
-      setStatus("Connected", "ok");
-    }
-  } catch (err) {
-    log("sendReport: " + err.message, "e");
-    setStatus("Send failed: " + err.message, "err");
-    stopPolling();
+// Readings are pushed rather than requested, so all there is to do is notice
+// when they are missing or have stopped.
+function checkLiveness() {
+  if (!device) return;
+  const quiet = Date.now() - (recvCount ? lastReportAt : connectedAt);
+  if (quiet <= STALE_MS) {
+    if (recvCount) setStatus("Connected", "ok");
+  } else if (!recvCount) {
+    setStatus("No readings — is the meter switched on?", "warn");
+  } else {
+    els.readout.classList.add("stale");
+    setStatus("No recent data", "warn");
   }
-}
-
-function startPolling() {
-  if (timer) return;
-  const ms = Math.max(50, Number(els.interval.value) || 250);
-  paused = false;
-  poll();
-  timer = setInterval(poll, ms);
-  els.pause.textContent = "Pause";
-}
-
-function stopPolling() {
-  if (timer) { clearInterval(timer); timer = null; }
-  paused = true;
-  els.pause.textContent = "Resume";
 }
 
 // --- Device ---------------------------------------------------------------
@@ -1022,12 +989,12 @@ async function attach(dev, how) {
   device.addEventListener("inputreport", onInputReport);
 
   els.connect.classList.add("hidden");
-  for (const k of ["hold", "rel", "resetStats", "pause", "disconnect"]) {
+  for (const k of ["hold", "rel", "resetStats", "disconnect"]) {
     els[k].disabled = false;
   }
   setStatus("Connected", "ok");
   log("opened " + device.productName + " (" + how + ")", "s");
-  startPolling();
+  connectedAt = Date.now();
 }
 
 async function connect(interactive) {
@@ -1061,18 +1028,16 @@ async function connect(interactive) {
 }
 
 async function disconnect() {
-  stopPolling();
   if (device) {
     device.removeEventListener("inputreport", onInputReport);
     try { await device.close(); } catch (err) { /* already gone */ }
     log("closed");
   }
   device = null;
-  sentCount = 0;
   recvCount = 0;
   els.readout.classList.add("stale");
   els.connect.classList.remove("hidden");
-  for (const k of ["hold", "rel", "resetStats", "pause", "disconnect"]) {
+  for (const k of ["hold", "rel", "resetStats", "disconnect"]) {
     els[k].disabled = true;
   }
   setStatus("Disconnected");
@@ -1105,15 +1070,6 @@ function exportCsv() {
 
 els.connect.addEventListener("click", () => connect(true));
 els.disconnect.addEventListener("click", disconnect);
-
-els.pause.addEventListener("click", () => {
-  if (timer) { stopPolling(); setStatus("Paused", "warn"); }
-  else startPolling();
-});
-
-els.interval.addEventListener("change", () => {
-  if (timer) { stopPolling(); startPolling(); }
-});
 
 els.hold.addEventListener("click", () => {
   heldFrame = heldFrame ? null : latest;
@@ -1206,16 +1162,12 @@ els.plot.addEventListener("pointermove", (e) => {
 });
 els.plot.addEventListener("pointerleave", () => { hoverX = null; scheduleDraw(); });
 
-els.lead06.addEventListener("change", () => {
-  sentCount = 0;
-  recvCount = 0;
-  log("leading 0x06 " + (els.lead06.checked ? "enabled" : "disabled"), "w");
-});
-
 new ResizeObserver(scheduleDraw).observe(els.plot);
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", scheduleDraw);
 setInterval(() => {
-  if (device && !paused && frozenAt === null) scheduleDraw();   // keep the axis moving
+  if (!device) return;
+  checkLiveness();
+  if (frozenAt === null) scheduleDraw();   // keep the axis moving
 }, 1000);
 
 if ("hid" in navigator) {
