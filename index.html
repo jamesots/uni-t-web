@@ -516,6 +516,7 @@ for (const id of ["status", "readout", "modeBadge", "holdBadge", "relBadge",
 
 let device = null;
 let latest = null;        // last parsed report
+let lastGood = null;      // last in-range report; OL carries no resolution
 let heldFrame = null;     // snapshot shown while Hold is on
 let relRef = null;        // relative-mode reference, in base units
 let samples = [];         // { t, v }, v in base units
@@ -580,8 +581,8 @@ function renderStats() {
   // Once the window spans an autorange, the current range's resolution would
   // flatten the older values (2.2 kohm shown at MΩ resolution is "0.00"), so
   // switch to SI and let each value pick its own prefix.
-  const fmt = latest && !stats.mixed
-    ? (v) => formatNative(v, latest) + " " + latest.displayUnit
+  const fmt = lastGood && !stats.mixed
+    ? (v) => formatNative(v, lastGood) + " " + lastGood.displayUnit
     : (v) => formatSI(v, stats.unit);
   els.statMin.textContent = fmt(stats.min - off);
   els.statMax.textContent = fmt(stats.max - off);
@@ -697,7 +698,7 @@ function drawChart() {
     return;
   }
 
-  const factor = latest ? latest.factor : 1;
+  const factor = lastGood ? lastGood.factor : 1;
   const off = relRef === null ? 0 : relRef;
   const scale = (v) => (v - off) / factor;
 
@@ -832,7 +833,7 @@ function drawChart() {
     ctx.beginPath(); ctx.arc(hx, hy, 4.5, 0, Math.PI * 2);
     ctx.fillStyle = seriesC; ctx.fill();
 
-    const ref = latest || { factor: 1, decimals: 4, displayUnit: "" };
+    const ref = lastGood || { factor: 1, decimals: 4, displayUnit: "" };
     const ago = ((tEnd - best.t) / 1000).toFixed(1);
     els.tip.innerHTML = "<b>" + formatNative(best.v - off, ref) + " " +
       ref.displayUnit + "</b><br><i>" + ago + "s ago</i>";
@@ -859,7 +860,7 @@ function rescaleFixedAxis(oldFactor, newFactor) {
 function syncAxisInputs() {
   if (yLo !== null) els.yLo.value = Number(yLo.toPrecision(6));
   if (yHi !== null) els.yHi.value = Number(yHi.toPrecision(6));
-  els.yUnit.textContent = latest ? latest.displayUnit : "";
+  els.yUnit.textContent = lastGood ? lastGood.displayUnit : "";
 }
 
 function scheduleDraw() {
@@ -877,17 +878,24 @@ function record(s) {
   if (unitKey !== null && s.group !== unitKey) {
     samples = [];
     stats = null;
+    lastFactor = null;
+    lastGood = null;
     log("function changed to " + s.modeName + " — chart and stats reset", "w");
-  } else if (lastFactor !== null && s.factor !== lastFactor) {
+  }
+  unitKey = s.group;
+
+  // Keep OL out of the chart and stats, and out of range tracking: its frame
+  // has no decimal point, so it says nothing about the resolution.
+  if (!Number.isFinite(s.value)) return;
+
+  if (lastFactor !== null && s.factor !== lastFactor) {
     if (stats) stats.mixed = true;
     rescaleFixedAxis(lastFactor, s.factor);
     log("range changed to " + s.displayUnit + " — history kept");
   }
-  unitKey = s.group;
   lastFactor = s.factor;
+  lastGood = s;
   els.chartUnit.textContent = s.displayUnit ? "(" + s.displayUnit + ")" : "";
-
-  if (!Number.isFinite(s.value)) return;   // keep OL out of the chart and stats
 
   samples.push({ t: Date.now(), v: s.value });
   if (samples.length > MAX_SAMPLES) samples.splice(0, samples.length - MAX_SAMPLES);
