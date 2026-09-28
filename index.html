@@ -1,0 +1,1239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UT61E+ Meter</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232a78d6'/><path d='M5 21 L11 21 L14 11 L18 24 L21 17 L27 17' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f4f4f2;
+    --surface-1: #fcfcfb;
+    --border: #dcdcd6;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #8a8983;
+    --series-1: #2a78d6;
+    --grid: #e7e7e1;
+    --ok: #15803d;
+    --warn: #b45309;
+    --err: #b91c1c;
+    --accent: #2a78d6;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --bg: #121211;
+      --surface-1: #1a1a19;
+      --border: #2e2e2b;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #8a8983;
+      --series-1: #3987e5;
+      --grid: #2a2a27;
+      --ok: #4ade80;
+      --warn: #fbbf24;
+      --err: #f87171;
+      --accent: #3987e5;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #121211; --surface-1: #1a1a19; --border: #2e2e2b;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8a8983;
+    --series-1: #3987e5; --grid: #2a2a27;
+    --ok: #4ade80; --warn: #fbbf24; --err: #f87171; --accent: #3987e5;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px 16px 48px;
+    background: var(--bg); color: var(--text-primary);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; }
+
+  header { display: flex; align-items: baseline; justify-content: space-between;
+           gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+  #status { font-size: 13px; color: var(--text-muted); }
+  #status.ok { color: var(--ok); }
+  #status.err { color: var(--err); }
+  #status.warn { color: var(--warn); }
+
+  .card { background: var(--surface-1); border: 1px solid var(--border);
+          border-radius: 12px; padding: 18px; margin-bottom: 14px; }
+
+  /* ---- readout ---- */
+  .readout { text-align: center; padding: 22px 16px 20px; }
+  .badges { display: flex; gap: 8px; justify-content: center; margin-bottom: 14px;
+            flex-wrap: wrap; min-height: 26px; }
+  .badge { font-size: 12.5px; font-weight: 600; letter-spacing: 0.04em;
+           text-transform: uppercase; padding: 4px 11px; border-radius: 999px;
+           border: 1px solid var(--border); color: var(--text-secondary); }
+  /* Mode names are already correctly cased ("mV AC"); do not upper-case them. */
+  .badge.mode { text-transform: none; font-size: 13px;
+                background: color-mix(in srgb, var(--series-1) 14%, transparent);
+                border-color: color-mix(in srgb, var(--series-1) 35%, transparent);
+                color: var(--text-primary); }
+  .badge.on { background: color-mix(in srgb, var(--warn) 18%, transparent);
+              border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+              color: var(--text-primary); }
+
+  .digits {
+    font-family: var(--mono); font-weight: 600;
+    font-size: clamp(52px, 15vw, 104px); line-height: 1;
+    letter-spacing: -0.03em; font-variant-numeric: tabular-nums;
+    display: flex; align-items: baseline; justify-content: center; gap: 0.16em;
+  }
+  .digits .u { font-size: 0.34em; color: var(--text-secondary); font-weight: 550;
+               letter-spacing: 0; }
+  .sub { margin-top: 14px; font-size: 13.5px; color: var(--text-muted);
+         display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; }
+  .sub b { color: var(--text-secondary); font-weight: 600; }
+  .stale .digits, .stale .sub { opacity: 0.3; }
+
+  /* ---- stat tiles ---- */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  @media (max-width: 560px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+  .tile { background: var(--surface-1); border: 1px solid var(--border);
+          border-radius: 10px; padding: 12px 14px; }
+  .tile .k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+             color: var(--text-muted); font-weight: 600; }
+  .tile .v { font-family: var(--mono); font-size: 19px; font-weight: 600;
+             margin-top: 5px; font-variant-numeric: tabular-nums;
+             color: var(--text-primary); white-space: nowrap;
+             overflow: hidden; text-overflow: ellipsis; }
+
+  /* ---- chart ---- */
+  .chart-head { display: flex; align-items: center; justify-content: space-between;
+                gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+  .chart-head .chart-title { margin-right: auto; }
+  button.btn.small { font-size: 13px; padding: 5px 11px; }
+  .chart-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+  .chart-title span { font-weight: 400; color: var(--text-muted); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px;
+         overflow: hidden; }
+  .seg button { border: 0; background: transparent; color: var(--text-secondary);
+                font: inherit; font-size: 13px; padding: 5px 11px; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button[aria-pressed="true"] { background: var(--series-1); color: #fff; font-weight: 600; }
+
+  .yctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+          margin-bottom: 12px; }
+  .yctl-k { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em;
+            color: var(--text-muted); font-weight: 600; }
+  .yctl-fields { display: inline-flex; align-items: center; gap: 10px; }
+  .yctl-fields input { width: 96px; }
+  .yctl-u { font-family: var(--mono); font-size: 13px; color: var(--text-muted); }
+
+  .plot { position: relative; width: 100%; height: 240px; }
+  .plot canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #tip { position: absolute; pointer-events: none; opacity: 0;
+         transition: opacity 0.1s; background: var(--surface-1);
+         border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
+         font-size: 12.5px; line-height: 1.45; white-space: nowrap;
+         box-shadow: 0 4px 14px rgba(0,0,0,0.16); z-index: 2; }
+  #tip b { font-family: var(--mono); font-variant-numeric: tabular-nums;
+           color: var(--text-primary); }
+  #tip i { font-style: normal; color: var(--text-muted); }
+
+  /* ---- controls ---- */
+  .controls { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; }
+  button.btn {
+    font: inherit; font-size: 14px; font-weight: 550; padding: 8px 15px;
+    border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface-1); color: var(--text-primary); cursor: pointer;
+  }
+  button.btn:hover:not(:disabled) { border-color: var(--text-muted); }
+  button.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.btn[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--warn) 20%, transparent);
+    border-color: color-mix(in srgb, var(--warn) 50%, transparent);
+  }
+  .spacer { flex: 1 1 auto; }
+  label.ctl { display: inline-flex; align-items: center; gap: 7px;
+              font-size: 13.5px; color: var(--text-muted); }
+  input[type="number"] { font: inherit; width: 76px; padding: 6px 9px;
+    border-radius: 7px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text-primary); }
+
+  /* ---- diagnostics ---- */
+  details.diag { border: 1px solid var(--border); border-radius: 12px;
+                 background: var(--surface-1); margin-top: 14px; }
+  details.diag > summary { cursor: pointer; padding: 13px 18px; font-size: 13.5px;
+    font-weight: 600; color: var(--text-secondary); list-style: none; }
+  details.diag > summary::-webkit-details-marker { display: none; }
+  details.diag > summary::before { content: "\25b8  "; color: var(--text-muted); }
+  details.diag[open] > summary::before { content: "\25be  "; }
+  .diag-body { padding: 0 18px 18px; }
+  .diag-body h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-muted); margin: 16px 0 8px; font-weight: 600; }
+
+  .align { font-family: var(--mono); font-size: 12px; color: var(--text-muted);
+           margin-bottom: 10px; }
+  .align.warn { color: var(--warn); font-weight: 600; }
+  .skipped { font-family: var(--mono); font-size: 12px; color: var(--warn);
+             background: color-mix(in srgb, var(--warn) 8%, transparent);
+             border-left: 3px solid var(--warn); border-radius: 0 6px 6px 0;
+             padding: 9px 12px; margin: 12px 0 0; white-space: pre; overflow-x: auto; }
+  .hex { font-family: var(--mono); font-size: 12.5px; line-height: 1.85; }
+  .hex .off { color: var(--text-muted); user-select: none; margin-right: 10px; }
+  .b-len  { color: #0e7490; font-weight: 700; }
+  .b-hdr  { color: var(--text-muted); }
+  .b-mode { color: #15803d; font-weight: 700; }
+  .b-rng  { color: var(--series-1); font-weight: 700; }
+  .b-val  { color: #b45309; font-weight: 700; }
+  .b-sep  { color: #be185d; font-weight: 700; }
+  .b-sgn  { color: #7c3aed; font-weight: 700; }
+  .b-pad  { opacity: 0.28; }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .b-len  { color: #22d3ee; }
+    :root:where(:not([data-theme="light"])) .b-mode { color: #4ade80; }
+    :root:where(:not([data-theme="light"])) .b-val  { color: #fbbf24; }
+    :root:where(:not([data-theme="light"])) .b-sgn  { color: #c4b5fd; }
+    :root:where(:not([data-theme="light"])) .b-sep  { color: #f9a8d4; }
+  }
+  .legend { margin-top: 10px; font-size: 12px; color: var(--text-muted);
+            display: flex; flex-wrap: wrap; gap: 13px; }
+  #log { font-family: var(--mono); font-size: 12px; max-height: 190px;
+         overflow-y: auto; color: var(--text-muted); }
+  #log .e { color: var(--err); } #log .w { color: var(--warn); } #log .s { color: var(--ok); }
+  code { font-family: var(--mono); font-size: 0.92em;
+         background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+         padding: 1px 5px; border-radius: 4px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>UT61E+</h1>
+    <div id="status">Looking for meter&hellip;</div>
+  </header>
+
+  <div class="card readout stale" id="readout">
+    <div class="badges">
+      <span class="badge mode" id="modeBadge">&mdash;</span>
+      <span class="badge on hidden" id="holdBadge">Hold</span>
+      <span class="badge on hidden" id="relBadge">Rel</span>
+    </div>
+    <div class="digits"><span id="digits">&ndash;&ndash;&ndash;</span><span class="u" id="unit"></span></div>
+    <div class="sub">
+      <span>range <b id="rangeOut">&ndash;</b></span>
+      <span><b id="rateOut">&ndash;</b> samples/s</span>
+      <span><b id="countOut">0</b> recorded</span>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="tile"><div class="k">Minimum</div><div class="v" id="statMin">&ndash;</div></div>
+    <div class="tile"><div class="k">Maximum</div><div class="v" id="statMax">&ndash;</div></div>
+    <div class="tile"><div class="k">Average</div><div class="v" id="statAvg">&ndash;</div></div>
+    <div class="tile"><div class="k">Span</div><div class="v" id="statSpan">&ndash;</div></div>
+  </div>
+
+  <div class="card" style="margin-top: 14px;">
+    <div class="chart-head">
+      <div class="chart-title">Reading over time <span id="chartUnit"></span></div>
+      <button class="btn small" id="freeze" aria-pressed="false">Pause chart</button>
+      <div class="seg" id="windows">
+        <button data-sec="30" aria-pressed="true">30s</button>
+        <button data-sec="120" aria-pressed="false">2m</button>
+        <button data-sec="600" aria-pressed="false">10m</button>
+        <button data-sec="0" aria-pressed="false">All</button>
+      </div>
+    </div>
+    <div class="yctl">
+      <span class="yctl-k">Y axis</span>
+      <div class="seg" id="yMode">
+        <button data-y="auto" aria-pressed="true">Auto</button>
+        <button data-y="fixed" aria-pressed="false">Fixed</button>
+      </div>
+      <span class="yctl-fields hidden" id="yFields">
+        <label class="ctl">min <input type="number" id="yLo" step="any"></label>
+        <label class="ctl">max <input type="number" id="yHi" step="any"></label>
+        <span class="yctl-u" id="yUnit"></span>
+      </span>
+    </div>
+    <div class="plot" id="plot">
+      <canvas id="chart"></canvas>
+      <div id="tip"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="controls">
+      <button class="btn" id="hold" aria-pressed="false" disabled>Hold</button>
+      <button class="btn" id="rel" aria-pressed="false" disabled>Relative</button>
+      <button class="btn" id="resetStats" disabled>Reset</button>
+      <span class="spacer"></span>
+      <label class="ctl">Interval <input type="number" id="interval" value="250" min="50" max="5000" step="50"> ms</label>
+      <button class="btn" id="pause" disabled>Pause</button>
+      <button class="btn" id="export" disabled>Export CSV</button>
+    </div>
+    <div class="controls" style="margin-top: 10px;">
+      <button class="btn primary hidden" id="connect">Connect meter</button>
+    </div>
+  </div>
+
+  <details class="diag">
+    <summary>Diagnostics</summary>
+    <div class="diag-body">
+      <div class="controls">
+        <label class="ctl"><input type="checkbox" id="lead06" checked> Send leading <code>0x06</code></label>
+        <button class="btn" id="disconnect" disabled>Disconnect</button>
+      </div>
+
+      <h3>Raw input report</h3>
+      <div class="align" id="align">No report received yet.</div>
+      <div class="hex" id="hex"></div>
+      <pre class="skipped hidden" id="skipped"></pre>
+      <div class="legend">
+        <span><b class="b-len">&#9632;</b> CH9329 length</span>
+        <span><b class="b-hdr">&#9632;</b> header <code>ab cd len</code></span>
+        <span><b class="b-mode">&#9632;</b> mode</span>
+        <span><b class="b-rng">&#9632;</b> range</span>
+        <span><b class="b-sep">&#9632;</b> sign sep</span>
+        <span><b class="b-val">&#9632;</b> value</span>
+        <span><b class="b-sgn">&#9632;</b> sign byte</span>
+      </div>
+
+      <h3>Log</h3>
+      <div id="log"></div>
+    </div>
+  </details>
+
+</div>
+
+<script>
+"use strict";
+
+const VENDOR_ID = 0x1a86;
+const PRODUCT_ID = 0xe429;
+const REPORT_LEN = 64;
+const MAX_SAMPLES = 50000;      // bounded so a forgotten tab cannot grow without limit
+
+// Meter-level request, identical to requestData in mwuertinger/ut61ep. The
+// leading 0x06 is a byte count for the 6 bytes after it -- confirmed required
+// on the CH9329. The cable answers with the same convention, prefixing its
+// reply with 0x13 (19 bytes).
+const REQUEST = [0xab, 0xcd, 0x03, 0x5e, 0x01, 0xd9];
+
+// --- Protocol, ported from parseMessage in ut61ep.go ----------------------
+
+const MODES = ["V AC", "mV AC", "V DC", "mV DC", "Hz", "Percent", "Ohm",
+  "Continuity", "Diode", "F", "0x0A", "0x0B", "uA DC", "uA AC", "mA DC",
+  "mA AC", "A DC", "A AC", "hFE", "0x13", "NCV", "0x15", "0x16", "0x17",
+  "LPF", "VAC_VDC"];
+
+const M = { VAC: 0, mVAC: 1, VDC: 2, mVDC: 3, Hz: 4, Percent: 5, Ohm: 6,
+  Continuity: 7, Diode: 8, F: 9, uADC: 12, uAAC: 13, mADC: 14, mAAC: 15,
+  ADC: 16, AAC: 17, LPF: 24, VAC_VDC: 25 };
+
+const UNITS = {
+  [M.VAC_VDC]: "V", [M.VAC]: "V", [M.mVAC]: "V", [M.VDC]: "V", [M.LPF]: "V",
+  [M.mVDC]: "V", [M.Hz]: "Hz", [M.Percent]: "%", [M.Ohm]: "Ω",
+  [M.Continuity]: "Ω", [M.Diode]: "V", [M.F]: "F", [M.uADC]: "A",
+  [M.uAAC]: "A", [M.mADC]: "A", [M.mAAC]: "A", [M.ADC]: "A", [M.AAC]: "A",
+};
+
+// Which readings belong to the same measurement. Modes that differ only by
+// scale (mV AC / V AC, uA DC / mA DC / A DC) are the same function, so the
+// meter autoranging across them keeps the chart. Anything else -- AC to DC,
+// volts to ohms, diode to continuity -- is a different measurement and resets.
+const FUNCTION_GROUP = {
+  [M.VAC]: "V AC", [M.mVAC]: "V AC",
+  [M.VDC]: "V DC", [M.mVDC]: "V DC",
+  [M.LPF]: "LPF", [M.Diode]: "Diode",
+  [M.Hz]: "Hz", [M.Percent]: "%",
+  [M.Ohm]: "Ohm", [M.Continuity]: "Continuity", [M.F]: "F",
+  [M.uADC]: "A DC", [M.mADC]: "A DC", [M.ADC]: "A DC",
+  [M.uAAC]: "A AC", [M.mAAC]: "A AC", [M.AAC]: "A AC",
+};
+
+const FACTORS = {
+  [M.mVAC]: [1e-3], [M.mVDC]: [1e-3],
+  [M.Ohm]: [1, 1e3, 1e3, 1e3, 1e6],
+  [M.uADC]: [1e-6], [M.uAAC]: [1e-6],
+  [M.mADC]: [1e-3], [M.mAAC]: [1e-3],
+};
+
+// SI prefix implied by a mode/range factor. This is what makes the readout
+// meter-native: factor 1e-3 on a volts mode means the meter is showing mV.
+const PREFIX = new Map([[1e-9, "n"], [1e-6, "µ"], [1e-3, "m"], [1, ""],
+  [1e3, "k"], [1e6, "M"], [1e9, "G"]]);
+
+// Frame layout, confirmed against a UT61E+ on a CH9329 cable:
+//
+//   13 ab cd 10 02 30 2d 30 2e 30 30 30 32 00 00 30 30 31 03
+//    |  |  |  |  |  |  |  `------ value -----'        |
+//    |  |  |  |  |  |  `- sign separator: 0x20 + / 0x2d -
+//    |  |  |  |  |  `- range (low nibble)
+//    |  |  |  |  `- mode
+//    |  `--'  `- message length
+//    `- CH9329 byte count
+//
+// Offsets are one byte earlier than mwuertinger/ut61ep uses for the CP2110,
+// and how many bytes precede the header varies by transport, so the layout is
+// anchored to the sign separator per frame rather than assumed.
+const VALUE_LEN = 6;
+const HEADER_SEARCH_LIMIT = 4;
+
+const hex = (n) => n.toString(16).padStart(2, "0");
+
+function findHeader(b) {
+  for (let i = 0; i < HEADER_SEARCH_LIMIT; i++) {
+    if (b[i] === 0xab && b[i + 1] === 0xcd) return i;
+  }
+  return -1;
+}
+
+const isDigit = (c) => c >= 0x30 && c <= 0x39;
+// The byte before the value is a sign: space for positive, '-' for negative.
+const SEP_POSITIVE = 0x20, SEP_NEGATIVE = 0x2d;
+const isSeparator = (c) => c === SEP_POSITIVE || c === SEP_NEGATIVE;
+// Value characters: digits, '.', the 'OL' over-limit marker, and padding space.
+const isValueChar = (c) => isDigit(c) || c === 0x2e || c === 0x4f || c === 0x4c || c === 0x20;
+
+// The meter puts a sign character between the range byte and the six value
+// characters. That separator is the one unambiguous anchor in the frame, so we
+// find it and derive every other offset from it rather than trusting a fixed
+// distance from the header.
+function detectLayout(b, base) {
+  for (let s = base + 3; s + VALUE_LEN < b.length; s++) {
+    if (!isSeparator(b[s])) continue;
+    let ok = true, digits = 0;
+    for (let k = 1; k <= VALUE_LEN; k++) {
+      const c = b[s + k];
+      if (!isValueChar(c)) { ok = false; break; }
+      if (isDigit(c) || c === 0x4f) digits++;
+    }
+    if (!ok || digits === 0) continue;
+    return {
+      sepIdx: s,
+      negative: b[s] === SEP_NEGATIVE,
+      valueStart: s + 1,
+      valueEnd: s + VALUE_LEN,
+      rangeIdx: s - 1,
+      modeIdx: s - 2,
+      signIdx: s + VALUE_LEN + 5,
+      detected: true,
+    };
+  }
+  // No anchor: this frame is not a reading. Guessing offsets here produced a
+  // phantom "V AC" (the range byte 0x30 masks to mode 0), so refuse instead.
+  return null;
+}
+
+function parseReport(b) {
+  const base = findHeader(b);
+  if (base < 0) {
+    throw new Error(
+      "no ab cd header in " + [...b.slice(0, HEADER_SEARCH_LIMIT + 1)].map(hex).join(" "));
+  }
+
+  const L = detectLayout(b, base);
+  if (!L) {
+    const err = new Error("no value field (not a reading frame)");
+    err.unrecognised = true;
+    throw err;
+  }
+
+  const signByte = b[L.signIdx];
+  // ut61ep.go takes the mode byte raw, and every defined mode fits in 0x00-0x19.
+  // Some bytes in this protocol do carry their payload in the low nibble with
+  // 0x30 in the high nibble, so accept that form too -- but only as a fallback,
+  // since masking unconditionally would alias a valid mode onto a wrong one.
+  const rawMode = b[L.modeIdx];
+  let mode = rawMode < MODES.length ? rawMode
+    : (rawMode & 0xf0) === 0x30 ? (rawMode & 0x0f) : rawMode;
+  if (mode === M.VAC_VDC) mode = (signByte & 0x08) === 0x08 ? M.VAC : M.VDC;
+
+  const range = b[L.rangeIdx] & 0x0f;
+  // The separator and bit 0 of the sign byte agree; prefer the separator since
+  // it is the byte we anchored on.
+  const sign = L.negative || (signByte & 0x01) === 1 ? -1 : 1;
+
+  const modeFactors = FACTORS[mode];
+  const factor = modeFactors ? modeFactors[Math.min(range, modeFactors.length - 1)] : 1;
+
+  let val = 0;
+  let comma = L.valueEnd;
+  let overLimit = false;
+  for (let i = L.valueStart; i <= L.valueEnd; i++) {
+    if (b[i] === 0x4f && b[i + 1] === 0x4c) { overLimit = true; break; }
+    if (b[i] === 0x2e) comma = i;
+    else if (isDigit(b[i])) val = val * 10 + (b[i] & 0x0f);
+  }
+
+  // decimals is the meter's own resolution on this range: keep it rather than
+  // re-rounding, so the display matches the LCD digit for digit.
+  const decimals = L.valueEnd - comma;
+  const value = overLimit ? Infinity : (sign * val) / Math.pow(10, decimals) * factor;
+  const baseUnit = UNITS[mode] ?? "";
+
+  return {
+    base, value, overLimit, range, mode, factor, decimals, baseUnit,
+    layout: L,
+    modeByte: b[L.modeIdx],
+    frameLen: base > 0 ? b[base - 1] : null,
+    modeName: MODES[mode] ?? ("0x" + hex(mode)),
+    group: FUNCTION_GROUP[mode] ?? ("mode 0x" + hex(mode)),
+    displayUnit: (PREFIX.get(factor) ?? "") + baseUnit,
+  };
+}
+
+// --- Formatting -----------------------------------------------------------
+
+// Native: the meter's own unit and digit count, e.g. 120.13 mV.
+function formatNative(baseValue, s) {
+  if (!Number.isFinite(baseValue)) return "OL";
+  return (baseValue / s.factor).toFixed(s.decimals);
+}
+
+// SI: used for statistics, which can outlive a range change.
+function formatSI(baseValue, baseUnit) {
+  if (baseValue === null || baseValue === undefined) return "–";
+  if (!Number.isFinite(baseValue)) return "OL";
+  const a = Math.abs(baseValue);
+  let exp = a === 0 ? 0 : Math.floor(Math.log10(a) / 3) * 3;
+  exp = Math.max(-9, Math.min(9, exp));
+  const scaled = baseValue / Math.pow(10, exp);
+  const digits = Math.abs(scaled) >= 100 ? 2 : Math.abs(scaled) >= 10 ? 3 : 4;
+  const prefix = PREFIX.get(Math.pow(10, exp)) ?? "";
+  return scaled.toFixed(digits) + " " + prefix + baseUnit;
+}
+
+// --- State ----------------------------------------------------------------
+
+const els = {};
+for (const id of ["status", "readout", "modeBadge", "holdBadge", "relBadge",
+  "digits", "unit", "rangeOut", "rateOut", "countOut", "statMin", "statMax",
+  "statAvg", "statSpan", "chartUnit", "windows", "plot", "chart", "tip",
+  "hold", "rel", "resetStats", "interval", "pause", "export", "connect",
+  "yMode", "yFields", "yLo", "yHi", "yUnit", "freeze",
+  "lead06", "disconnect", "hex", "align", "skipped", "log"]) els[id] = document.getElementById(id);
+
+let device = null;
+let timer = null;
+let paused = false;
+let latest = null;        // last parsed report
+let heldFrame = null;     // snapshot shown while Hold is on
+let relRef = null;        // relative-mode reference, in base units
+let samples = [];         // { t, v }, v in base units
+let stats = null;         // { min, max, sum, n, unit }
+let unitKey = null;       // base SI unit; a change resets chart and stats
+let lastFactor = null;    // last range factor, to log autoranges
+let windowSec = 30;
+let yFixed = false;       // false = autoscale to the visible samples
+let yLo = null, yHi = null;   // fixed bounds, in the units currently displayed
+let frozenAt = null;      // when set, the chart holds this instant; recording continues
+const ZERO_RUN_MIN = 3;   // consecutive exact zeros before a run is marked
+let recvTimes = [];
+let sentCount = 0, recvCount = 0, lastReportAt = 0;
+let skippedCount = 0, skippedSample = null;
+let needsDraw = false;
+
+function log(msg, cls) {
+  const line = document.createElement("div");
+  if (cls) line.className = cls;
+  line.textContent = new Date().toLocaleTimeString() + "  " + msg;
+  els.log.prepend(line);
+  while (els.log.childElementCount > 300) els.log.lastElementChild.remove();
+}
+
+function setStatus(msg, cls) {
+  els.status.textContent = msg;
+  els.status.className = cls || "";
+}
+
+// --- Rendering ------------------------------------------------------------
+
+function displayed(s) {
+  if (!Number.isFinite(s.value)) return s.value;
+  return relRef === null ? s.value : s.value - relRef;
+}
+
+function renderReadout() {
+  const s = heldFrame || latest;
+  if (!s) return;
+  els.readout.classList.remove("stale");
+  els.digits.textContent = formatNative(displayed(s), s);
+  els.unit.textContent = s.displayUnit;
+  els.modeBadge.textContent = s.modeName;
+  els.rangeOut.textContent = s.range;
+  els.countOut.textContent = samples.length.toLocaleString();
+
+  const now = performance.now();
+  recvTimes = recvTimes.filter((t) => now - t < 3000);
+  els.rateOut.textContent = recvTimes.length > 1
+    ? (recvTimes.length / ((now - recvTimes[0]) / 1000)).toFixed(1) : "–";
+}
+
+function renderStats() {
+  if (!stats || stats.n === 0) {
+    for (const k of ["statMin", "statMax", "statAvg", "statSpan"]) {
+      els[k].textContent = "–";
+    }
+    return;
+  }
+  const off = relRef === null ? 0 : relRef;
+  // Within one range, format like the readout so the tiles line up with it.
+  // Once the window spans an autorange, the current range's resolution would
+  // flatten the older values (2.2 kohm shown at MΩ resolution is "0.00"), so
+  // switch to SI and let each value pick its own prefix.
+  const fmt = latest && !stats.mixed
+    ? (v) => formatNative(v, latest) + " " + latest.displayUnit
+    : (v) => formatSI(v, stats.unit);
+  els.statMin.textContent = fmt(stats.min - off);
+  els.statMax.textContent = fmt(stats.max - off);
+  els.statAvg.textContent = fmt(stats.sum / stats.n - off);
+  els.statSpan.textContent = fmt(stats.max - stats.min);
+}
+
+function classForByte(i, base, L) {
+  if (base < 0) return "";
+  if (i < base) return "b-len";
+  if (i <= base + 2) return "b-hdr";
+  if (!L) return "";
+  if (i === L.sepIdx) return "b-sep";
+  if (i === L.modeIdx) return "b-mode";
+  if (i === L.rangeIdx) return "b-rng";
+  if (i >= L.valueStart && i <= L.valueEnd) return "b-val";
+  if (i === L.signIdx) return "b-sgn";
+  return "";
+}
+
+function renderHex(b, base, L) {
+  let last = b.length - 1;
+  while (last > 0 && b[last] === 0) last--;
+  let html = "";
+  for (let row = 0; row < b.length; row += 16) {
+    html += '<div><span class="off">' + hex(row) + "</span>";
+    for (let i = row; i < row + 16 && i < b.length; i++) {
+      let cls = classForByte(i, base, L);
+      if (!cls && i > last) cls = "b-pad";
+      html += cls ? '<b class="' + cls + '">' + hex(b[i]) + "</b> " : hex(b[i]) + " ";
+    }
+    html += "</div>";
+  }
+  els.hex.innerHTML = html;
+}
+
+// --- Chart ----------------------------------------------------------------
+
+const ctx = els.chart.getContext("2d");
+const PAD = { l: 64, r: 16, t: 12, b: 26 };
+let hoverX = null;
+let plotGeom = null;
+let autoLo = null, autoHi = null;   // last autoscaled bounds, for prefilling
+
+function css(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function visibleSamples() {
+  const end = frozenAt !== null ? frozenAt : Date.now();
+  let hiIdx = samples.length;
+  if (frozenAt !== null) {
+    while (hiIdx > 0 && samples[hiIdx - 1].t > end) hiIdx--;
+  }
+  if (windowSec === 0) return samples.slice(0, hiIdx);
+  const cutoff = end - windowSec * 1000;
+  let i = hiIdx;
+  while (i > 0 && samples[i - 1].t >= cutoff) i--;
+  return samples.slice(i, hiIdx);
+}
+
+// Stretches where the meter sat at exactly zero for several samples. Worth
+// marking because a flatline at 0 usually means an open lead or a probe that
+// has come off, not a measurement -- and it is invisible on the trace itself.
+function zeroRuns(pts) {
+  const runs = [];
+  let start = -1;
+  for (let i = 0; i <= pts.length; i++) {
+    const isZero = i < pts.length && pts[i].v === 0;
+    if (isZero && start < 0) start = i;
+    if (!isZero && start >= 0) {
+      if (i - start >= ZERO_RUN_MIN) runs.push({ from: pts[start].t, to: pts[i - 1].t });
+      start = -1;
+    }
+  }
+  return runs;
+}
+
+// Round a span to a clean tick step (1 / 2 / 5 x 10^n).
+function niceStep(span, target) {
+  if (!(span > 0)) return 1;
+  const raw = span / target;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+  return (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
+}
+
+function drawChart() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = els.plot.clientWidth, h = els.plot.clientHeight;
+  if (!w || !h) return;
+  if (els.chart.width !== Math.round(w * dpr) || els.chart.height !== Math.round(h * dpr)) {
+    els.chart.width = Math.round(w * dpr);
+    els.chart.height = Math.round(h * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  const gridC = css("--grid"), textC = css("--text-muted"),
+        seriesC = css("--series-1"), surfaceC = css("--surface-1");
+  const x0 = PAD.l, x1 = w - PAD.r, y0 = PAD.t, y1 = h - PAD.b;
+
+  ctx.font = '11px ' + css("--mono");
+  ctx.textBaseline = "middle";
+
+  const pts = visibleSamples().filter((p) => Number.isFinite(p.v));
+  if (pts.length < 2) {
+    ctx.fillStyle = textC;
+    ctx.textAlign = "center";
+    ctx.fillText("Waiting for samples…", (x0 + x1) / 2, (y0 + y1) / 2);
+    plotGeom = null;
+    els.tip.style.opacity = "0";
+    return;
+  }
+
+  const factor = latest ? latest.factor : 1;
+  const off = relRef === null ? 0 : relRef;
+  const scale = (v) => (v - off) / factor;
+
+  let lo, hi;
+  if (yFixed && yLo !== null && yHi !== null && yHi > yLo) {
+    lo = yLo; hi = yHi;
+  } else {
+    lo = Infinity; hi = -Infinity;
+    for (const p of pts) { const v = scale(p.v); if (v < lo) lo = v; if (v > hi) hi = v; }
+    if (hi - lo < 1e-12) {
+      const pad = Math.abs(hi) * 0.001 || 1;
+      lo -= pad; hi += pad;
+    } else {
+      const pad = (hi - lo) * 0.12;
+      lo -= pad; hi += pad;
+    }
+    autoLo = lo; autoHi = hi;   // remembered so Fixed can prefill from the view
+  }
+
+  const tEnd = frozenAt !== null ? frozenAt : Date.now();
+  const tStart = windowSec === 0 ? pts[0].t : tEnd - windowSec * 1000;
+  const tSpan = Math.max(1, tEnd - tStart);
+
+  const sx = (t) => x0 + ((t - tStart) / tSpan) * (x1 - x0);
+  const sy = (v) => y1 - ((v - lo) / (hi - lo)) * (y1 - y0);
+  plotGeom = { x0, x1, y0, y1, tStart, tSpan, pts, scale, sx, sy };
+
+  // Gridlines and y ticks: hairline, solid, recessive.
+  const step = niceStep(hi - lo, 4);
+  const dp = Math.max(0, Math.min(6, -Math.floor(Math.log10(step))));
+  ctx.strokeStyle = gridC;
+  ctx.lineWidth = 1;
+  ctx.textAlign = "right";
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
+    const y = Math.round(sy(v)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+    ctx.fillStyle = textC;
+    ctx.fillText(v.toFixed(dp), x0 - 9, sy(v));
+  }
+
+  // X ticks read as recency rather than wall-clock.
+  ctx.textAlign = "center";
+  ctx.fillStyle = textC;
+  const secSpan = tSpan / 1000;
+  const tStep = niceStep(secSpan, 4);
+  for (let s = 0; s <= secSpan + 1e-9; s += tStep) {
+    const t = tEnd - s * 1000;
+    if (t < tStart - 1) break;
+    const label = s === 0 ? "now" : "-" + (s < 60 ? s + "s" : (s / 60) + "m");
+    ctx.fillText(label, sx(t), y1 + 13);
+  }
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.clip();
+
+  // Zero runs go under the trace so the line stays on top.
+  const runs = zeroRuns(pts);
+  if (runs.length) {
+    ctx.fillStyle = textC;
+    ctx.globalAlpha = 0.1;
+    for (const r of runs) {
+      const rx = sx(r.from), rw = Math.max(2, sx(r.to) - rx);
+      ctx.fillRect(rx, y0, rw, y1 - y0);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  const trace = () => {
+    ctx.beginPath();
+    for (let i = 0; i < pts.length; i++) {
+      const x = sx(pts[i].t), y = sy(scale(pts[i].v));
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+  };
+
+  // Area wash under the line, then the line at 2px round.
+  trace();
+  ctx.lineTo(sx(pts[pts.length - 1].t), y1);
+  ctx.lineTo(sx(pts[0].t), y1);
+  ctx.closePath();
+  ctx.globalAlpha = 0.1;
+  ctx.fillStyle = seriesC;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  trace();
+  ctx.strokeStyle = seriesC;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.stroke();
+  ctx.restore();
+
+  // Label each zero run once, centred, where there is room for the text.
+  if (runs.length) {
+    ctx.fillStyle = textC;
+    ctx.textAlign = "center";
+    ctx.font = "10px " + css("--mono");
+    for (const r of runs) {
+      const rx = sx(r.from), rw = sx(r.to) - rx;
+      if (rw < 34) continue;
+      const cx = Math.min(Math.max(rx + rw / 2, x0 + 18), x1 - 18);
+      ctx.fillText("zero", cx, y0 + 9);
+    }
+    ctx.font = "11px " + css("--mono");
+  }
+
+  // End dot with a surface ring so it stays legible over the line.
+  const lastP = pts[pts.length - 1];
+  const lx = sx(lastP.t), ly = sy(scale(lastP.v));
+  ctx.beginPath(); ctx.arc(lx, ly, 6, 0, Math.PI * 2);
+  ctx.fillStyle = surfaceC; ctx.fill();
+  ctx.beginPath(); ctx.arc(lx, ly, 4, 0, Math.PI * 2);
+  ctx.fillStyle = seriesC; ctx.fill();
+
+  if (hoverX !== null) {
+    const t = tStart + ((hoverX - x0) / (x1 - x0)) * tSpan;
+    let best = pts[0], bestD = Infinity;
+    for (const p of pts) {
+      const d = Math.abs(p.t - t);
+      if (d < bestD) { bestD = d; best = p; }
+    }
+    const hx = sx(best.t), hy = sy(scale(best.v));
+    ctx.strokeStyle = gridC;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(Math.round(hx) + 0.5, y0);
+    ctx.lineTo(Math.round(hx) + 0.5, y1);
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(hx, hy, 6.5, 0, Math.PI * 2);
+    ctx.fillStyle = surfaceC; ctx.fill();
+    ctx.beginPath(); ctx.arc(hx, hy, 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = seriesC; ctx.fill();
+
+    const ref = latest || { factor: 1, decimals: 4, displayUnit: "" };
+    const ago = ((tEnd - best.t) / 1000).toFixed(1);
+    els.tip.innerHTML = "<b>" + formatNative(best.v - off, ref) + " " +
+      ref.displayUnit + "</b><br><i>" + ago + "s ago</i>";
+    els.tip.style.opacity = "1";
+    const tw = els.tip.offsetWidth, th = els.tip.offsetHeight;
+    els.tip.style.left = Math.min(Math.max(hx - tw / 2, 2), w - tw - 2) + "px";
+    els.tip.style.top = Math.max(hy - th - 12, 2) + "px";
+  } else {
+    els.tip.style.opacity = "0";
+  }
+}
+
+// A fixed window is entered in displayed units. When the meter autoranges the
+// prefix changes under it, so rescale the bounds to keep the same physical
+// window rather than silently reinterpreting 0-5 kohm as 0-5 Mohm.
+function rescaleFixedAxis(oldFactor, newFactor) {
+  if (!yFixed || yLo === null || yHi === null) return;
+  const k = oldFactor / newFactor;
+  yLo *= k;
+  yHi *= k;
+  syncAxisInputs();
+}
+
+function syncAxisInputs() {
+  if (yLo !== null) els.yLo.value = Number(yLo.toPrecision(6));
+  if (yHi !== null) els.yHi.value = Number(yHi.toPrecision(6));
+  els.yUnit.textContent = latest ? latest.displayUnit : "";
+}
+
+function scheduleDraw() {
+  if (needsDraw) return;
+  needsDraw = true;
+  requestAnimationFrame(() => { needsDraw = false; drawChart(); });
+}
+
+// --- Sampling -------------------------------------------------------------
+
+function record(s) {
+  // Samples are stored in base SI units, so an autorange is continuous: the
+  // history stays valid and only the axis label changes. A change of function
+  // is a different measurement, and that resets.
+  if (unitKey !== null && s.group !== unitKey) {
+    samples = [];
+    stats = null;
+    log("function changed to " + s.modeName + " — chart and stats reset", "w");
+  } else if (lastFactor !== null && s.factor !== lastFactor) {
+    if (stats) stats.mixed = true;
+    rescaleFixedAxis(lastFactor, s.factor);
+    log("range changed to " + s.displayUnit + " — history kept");
+  }
+  unitKey = s.group;
+  lastFactor = s.factor;
+  els.chartUnit.textContent = s.displayUnit ? "(" + s.displayUnit + ")" : "";
+
+  if (!Number.isFinite(s.value)) return;   // keep OL out of the chart and stats
+
+  samples.push({ t: Date.now(), v: s.value });
+  if (samples.length > MAX_SAMPLES) samples.splice(0, samples.length - MAX_SAMPLES);
+
+  if (!stats) {
+    stats = { min: s.value, max: s.value, sum: 0, n: 0, unit: s.baseUnit, mixed: false };
+  }
+  if (s.value < stats.min) stats.min = s.value;
+  if (s.value > stats.max) stats.max = s.value;
+  stats.sum += s.value;
+  stats.n++;
+}
+
+function onInputReport(event) {
+  recvCount++;
+  lastReportAt = Date.now();
+  recvTimes.push(performance.now());
+
+  const b = new Uint8Array(event.data.buffer);
+  const base = findHeader(b);
+
+  try {
+    const s = parseReport(b);
+    latest = s;
+    renderHex(b, base, s.layout);
+    renderAlignment(s);
+    record(s);
+    renderReadout();
+    renderStats();
+    scheduleDraw();
+    els.export.disabled = samples.length === 0;
+  } catch (err) {
+    if (err.unrecognised) {
+      // Keep displaying the last good reading; just count and capture this one.
+      skippedCount++;
+      if (!skippedSample) {
+        skippedSample = b.slice();
+        log("unrecognised frame captured \u2014 see Diagnostics", "w");
+      }
+      renderSkipped();
+    } else {
+      renderHex(b, base, null);
+      log("parse: " + err.message, "e");
+    }
+  }
+}
+
+function renderSkipped() {
+  if (!skippedSample) return;
+  const rows = [];
+  for (let r = 0; r < 32; r += 16) {
+    let line = hex(r) + "  ";
+    for (let i = r; i < r + 16; i++) line += hex(skippedSample[i]) + " ";
+    rows.push(line);
+  }
+  els.skipped.textContent =
+    skippedCount + " frame" + (skippedCount === 1 ? "" : "s") +
+    " skipped (no value field). First one:\n" + rows.join("\n");
+  els.skipped.classList.remove("hidden");
+}
+
+// Show the alignment actually used, so a future framing change is visible
+// rather than silently producing nonsense.
+function b_sep(L) { return L.negative ? SEP_NEGATIVE : SEP_POSITIVE; }
+
+function renderAlignment(s) {
+  const L = s.layout;
+  els.align.textContent =
+    "detected  \u00b7  header@" + s.base +
+    (s.frameLen === null ? "" : " len=0x" + hex(s.frameLen)) +
+    "  \u00b7  mode@" + L.modeIdx + "=0x" + hex(s.modeByte) +
+    "  \u00b7  range@" + L.rangeIdx +
+    "  \u00b7  sep@" + L.sepIdx + "='" + String.fromCharCode(b_sep(L)) + "'" +
+    "  \u00b7  value@" + L.valueStart + "\u2013" + L.valueEnd +
+    "  \u00b7  sign@" + L.signIdx;
+  els.align.className = "align";
+}
+
+function buildRequest() {
+  const req = new Uint8Array(REPORT_LEN);
+  req.set(els.lead06.checked ? [0x06].concat(REQUEST) : REQUEST);
+  return req;
+}
+
+async function poll() {
+  if (!device || !device.opened || paused) return;
+  try {
+    await device.sendReport(0x00, buildRequest());
+    sentCount++;
+    if (sentCount >= 5 && recvCount === 0) {
+      setStatus("Requests sent, no reply — is the meter switched on?", "warn");
+    } else if (recvCount > 0 && Date.now() - lastReportAt > 3000) {
+      els.readout.classList.add("stale");
+      setStatus("No recent data", "warn");
+    } else if (recvCount > 0) {
+      setStatus("Connected", "ok");
+    }
+  } catch (err) {
+    log("sendReport: " + err.message, "e");
+    setStatus("Send failed: " + err.message, "err");
+    stopPolling();
+  }
+}
+
+function startPolling() {
+  if (timer) return;
+  const ms = Math.max(50, Number(els.interval.value) || 250);
+  paused = false;
+  poll();
+  timer = setInterval(poll, ms);
+  els.pause.textContent = "Pause";
+}
+
+function stopPolling() {
+  if (timer) { clearInterval(timer); timer = null; }
+  paused = true;
+  els.pause.textContent = "Resume";
+}
+
+// --- Device ---------------------------------------------------------------
+
+async function attach(dev, how) {
+  device = dev;
+  if (!device.opened) await device.open();
+  device.addEventListener("inputreport", onInputReport);
+
+  els.connect.classList.add("hidden");
+  for (const k of ["hold", "rel", "resetStats", "pause", "disconnect"]) {
+    els[k].disabled = false;
+  }
+  setStatus("Connected", "ok");
+  log("opened " + device.productName + " (" + how + ")", "s");
+  startPolling();
+}
+
+async function connect(interactive) {
+  if (!("hid" in navigator)) {
+    setStatus("WebHID unavailable — use Chrome, Edge or Opera on desktop", "err");
+    els.connect.classList.add("hidden");
+    return;
+  }
+  try {
+    const granted = (await navigator.hid.getDevices())
+      .find((d) => d.vendorId === VENDOR_ID && d.productId === PRODUCT_ID);
+    if (granted) { await attach(granted, "auto"); return; }
+
+    if (!interactive) {
+      // No standing grant, and the chooser needs a user gesture: ask for one.
+      setStatus("Meter not authorised yet", "warn");
+      els.connect.classList.remove("hidden");
+      return;
+    }
+
+    const chosen = await navigator.hid.requestDevice({
+      filters: [{ vendorId: VENDOR_ID, productId: PRODUCT_ID }],
+    });
+    if (!chosen.length) { setStatus("No device chosen", "warn"); return; }
+    await attach(chosen[0], "chooser");
+  } catch (err) {
+    setStatus("Connect failed: " + err.message, "err");
+    log("connect: " + err.message, "e");
+    els.connect.classList.remove("hidden");
+  }
+}
+
+async function disconnect() {
+  stopPolling();
+  if (device) {
+    device.removeEventListener("inputreport", onInputReport);
+    try { await device.close(); } catch (err) { /* already gone */ }
+    log("closed");
+  }
+  device = null;
+  sentCount = 0;
+  recvCount = 0;
+  els.readout.classList.add("stale");
+  els.connect.classList.remove("hidden");
+  for (const k of ["hold", "rel", "resetStats", "pause", "disconnect"]) {
+    els[k].disabled = true;
+  }
+  setStatus("Disconnected");
+}
+
+// --- CSV ------------------------------------------------------------------
+
+function exportCsv() {
+  if (!samples.length) return;
+  const unit = stats ? stats.unit : "";
+  const mode = latest ? latest.modeName : "";
+  const range = latest ? latest.range : "";
+  const t0 = samples[0].t;
+  const rows = ["iso_time,elapsed_s,value,unit,mode,range"];
+  for (const s of samples) {
+    rows.push([new Date(s.t).toISOString(), ((s.t - t0) / 1000).toFixed(3),
+      s.v, unit, mode, range].join(","));
+  }
+  const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "ut61e-" + new Date().toISOString().replace(/[:.]/g, "-") + ".csv";
+  a.click();
+  URL.revokeObjectURL(url);
+  log("exported " + samples.length + " samples", "s");
+}
+
+// --- Wiring ---------------------------------------------------------------
+
+els.connect.addEventListener("click", () => connect(true));
+els.disconnect.addEventListener("click", disconnect);
+
+els.pause.addEventListener("click", () => {
+  if (timer) { stopPolling(); setStatus("Paused", "warn"); }
+  else startPolling();
+});
+
+els.interval.addEventListener("change", () => {
+  if (timer) { stopPolling(); startPolling(); }
+});
+
+els.hold.addEventListener("click", () => {
+  heldFrame = heldFrame ? null : latest;
+  const on = heldFrame !== null;
+  els.hold.setAttribute("aria-pressed", String(on));
+  els.holdBadge.classList.toggle("hidden", !on);
+  renderReadout();
+});
+
+els.rel.addEventListener("click", () => {
+  if (relRef === null) {
+    if (!latest || !Number.isFinite(latest.value)) return;
+    relRef = latest.value;
+    log("relative reference set to " + formatSI(relRef, latest.baseUnit));
+  } else {
+    relRef = null;
+    log("relative mode off");
+  }
+  const on = relRef !== null;
+  els.rel.setAttribute("aria-pressed", String(on));
+  els.relBadge.classList.toggle("hidden", !on);
+  renderReadout();
+  renderStats();
+  scheduleDraw();
+});
+
+els.resetStats.addEventListener("click", () => {
+  stats = null;
+  samples = [];
+  unitKey = null;
+  lastFactor = null;
+  els.export.disabled = true;
+  renderStats();
+  renderReadout();
+  scheduleDraw();
+  log("stats and samples cleared");
+});
+
+els.export.addEventListener("click", exportCsv);
+
+els.freeze.addEventListener("click", () => {
+  frozenAt = frozenAt === null ? Date.now() : null;
+  const on = frozenAt !== null;
+  els.freeze.setAttribute("aria-pressed", String(on));
+  els.freeze.textContent = on ? "Resume chart" : "Pause chart";
+  scheduleDraw();
+});
+
+els.yMode.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-y]");
+  if (!btn) return;
+  yFixed = btn.dataset.y === "fixed";
+  for (const b of els.yMode.querySelectorAll("button")) {
+    b.setAttribute("aria-pressed", String(b === btn));
+  }
+  els.yFields.classList.toggle("hidden", !yFixed);
+  if (yFixed && (yLo === null || yHi === null)) {
+    // Start from whatever is on screen, so switching to Fixed does not jump.
+    yLo = autoLo !== null ? Number(autoLo.toPrecision(6)) : 0;
+    yHi = autoHi !== null ? Number(autoHi.toPrecision(6)) : 1;
+  }
+  syncAxisInputs();
+  scheduleDraw();
+});
+
+for (const el of [els.yLo, els.yHi]) {
+  el.addEventListener("change", () => {
+    const lo = Number(els.yLo.value), hi = Number(els.yHi.value);
+    if (Number.isFinite(lo) && Number.isFinite(hi) && hi > lo) { yLo = lo; yHi = hi; }
+    else { syncAxisInputs(); }   // reject an inverted or empty range
+    scheduleDraw();
+  });
+}
+
+els.windows.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-sec]");
+  if (!btn) return;
+  windowSec = Number(btn.dataset.sec);
+  for (const b of els.windows.querySelectorAll("button")) {
+    b.setAttribute("aria-pressed", String(b === btn));
+  }
+  scheduleDraw();
+});
+
+els.plot.addEventListener("pointermove", (e) => {
+  const r = els.plot.getBoundingClientRect();
+  const x = e.clientX - r.left;
+  hoverX = (plotGeom && x >= plotGeom.x0 && x <= plotGeom.x1) ? x : null;
+  scheduleDraw();
+});
+els.plot.addEventListener("pointerleave", () => { hoverX = null; scheduleDraw(); });
+
+els.lead06.addEventListener("change", () => {
+  sentCount = 0;
+  recvCount = 0;
+  log("leading 0x06 " + (els.lead06.checked ? "enabled" : "disabled"), "w");
+});
+
+new ResizeObserver(scheduleDraw).observe(els.plot);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", scheduleDraw);
+setInterval(() => {
+  if (device && !paused && frozenAt === null) scheduleDraw();   // keep the axis moving
+}, 1000);
+
+if ("hid" in navigator) {
+  navigator.hid.addEventListener("disconnect", (e) => {
+    if (device && e.device === device) { log("meter unplugged", "e"); disconnect(); }
+  });
+  navigator.hid.addEventListener("connect", (e) => {
+    if (!device && e.device.vendorId === VENDOR_ID && e.device.productId === PRODUCT_ID) {
+      log("meter plugged in", "s");
+      attach(e.device, "hotplug").catch((err) => log("attach: " + err.message, "e"));
+    }
+  });
+  connect(false);
+} else {
+  setStatus("WebHID unavailable — use Chrome, Edge or Opera on desktop", "err");
+}
+
+drawChart();
+</script>
+</body>
+</html>
