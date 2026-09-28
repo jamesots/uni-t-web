@@ -81,6 +81,8 @@
   .badge.on { background: color-mix(in srgb, var(--warn) 18%, transparent);
               border-color: color-mix(in srgb, var(--warn) 45%, transparent);
               color: var(--text-primary); }
+  /* The meter's own LCD annunciators, as opposed to the page's Hold/Rel. */
+  .badge.meter { text-transform: none; }
 
   .digits {
     font-family: var(--mono); font-weight: 600;
@@ -189,12 +191,14 @@
   .b-val  { color: #b45309; font-weight: 700; }
   .b-sep  { color: #be185d; font-weight: 700; }
   .b-sgn  { color: #7c3aed; font-weight: 700; }
+  .b-flg  { color: #4f46e5; font-weight: 700; }
   .b-pad  { opacity: 0.28; }
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) .b-len  { color: #22d3ee; }
     :root:where(:not([data-theme="light"])) .b-mode { color: #4ade80; }
     :root:where(:not([data-theme="light"])) .b-val  { color: #fbbf24; }
     :root:where(:not([data-theme="light"])) .b-sgn  { color: #c4b5fd; }
+    :root:where(:not([data-theme="light"])) .b-flg  { color: #a5b4fc; }
     :root:where(:not([data-theme="light"])) .b-sep  { color: #f9a8d4; }
   }
   .legend { margin-top: 10px; font-size: 12px; color: var(--text-muted);
@@ -221,6 +225,7 @@
       <span class="badge mode" id="modeBadge">&mdash;</span>
       <span class="badge on hidden" id="holdBadge">Hold</span>
       <span class="badge on hidden" id="relBadge">Rel</span>
+      <span class="badge meter hidden" id="meterFlags" title="Set on the meter itself"></span>
     </div>
     <div class="digits"><span id="digits">&ndash;&ndash;&ndash;</span><span class="u" id="unit"></span></div>
     <div class="sub">
@@ -297,6 +302,7 @@
         <span><b class="b-rng">&#9632;</b> range</span>
         <span><b class="b-sep">&#9632;</b> sign sep</span>
         <span><b class="b-val">&#9632;</b> value</span>
+        <span><b class="b-flg">&#9632;</b> meter flags</span>
         <span><b class="b-sgn">&#9632;</b> sign byte</span>
       </div>
 
@@ -377,6 +383,14 @@ const PREFIX = new Map([[1e-9, "n"], [1e-6, "µ"], [1e-3, "m"], [1, ""],
 // and how many bytes precede the header varies by transport, so the layout is
 // anchored to the sign separator per frame rather than assumed.
 const VALUE_LEN = 6;
+
+// Bits of the flags byte, two after the value (0x30 when none are set).
+const METER_FLAGS = [
+  { bit: 0x02, name: "HOLD" },
+  { bit: 0x01, name: "REL" },
+  { bit: 0x08, name: "MAX" },
+  { bit: 0x04, name: "MIN" },
+];
 const HEADER_SEARCH_LIMIT = 4;
 
 const hex = (n) => n.toString(16).padStart(2, "0");
@@ -416,6 +430,7 @@ function detectLayout(b, base) {
       valueEnd: s + VALUE_LEN,
       rangeIdx: s - 1,
       modeIdx: s - 2,
+      flagsIdx: s + VALUE_LEN + 3,
       signIdx: s + VALUE_LEN + 5,
       detected: true,
     };
@@ -471,9 +486,12 @@ function parseReport(b) {
   const decimals = L.valueEnd - comma;
   const value = overLimit ? Infinity : (sign * val) / Math.pow(10, decimals) * factor;
   const baseUnit = UNITS[mode] ?? "";
+  // Annunciators set with the meter's own buttons, in the low nibble.
+  const flagByte = b[L.flagsIdx];
+  const meterFlags = METER_FLAGS.filter((f) => flagByte & f.bit).map((f) => f.name);
 
   return {
-    base, value, overLimit, range, mode, factor, decimals, baseUnit,
+    base, value, overLimit, range, mode, factor, decimals, baseUnit, meterFlags, flagByte,
     layout: L,
     modeByte: b[L.modeIdx],
     frameLen: base > 0 ? b[base - 1] : null,
@@ -508,7 +526,7 @@ function formatSI(baseValue, baseUnit) {
 
 const els = {};
 for (const id of ["status", "readout", "modeBadge", "holdBadge", "relBadge",
-  "digits", "unit", "rangeOut", "rateOut", "countOut", "statMin", "statMax",
+  "meterFlags", "digits", "unit", "rangeOut", "rateOut", "countOut", "statMin", "statMax",
   "statAvg", "statSpan", "chartUnit", "windows", "plot", "chart", "tip",
   "hold", "rel", "resetStats", "export", "connect",
   "yMode", "yFields", "yLo", "yHi", "yUnit", "freeze",
@@ -561,6 +579,8 @@ function renderReadout() {
   els.digits.textContent = formatNative(displayed(s), s);
   els.unit.textContent = s.displayUnit;
   els.modeBadge.textContent = s.modeName;
+  els.meterFlags.textContent = "Meter " + s.meterFlags.join(" ");
+  els.meterFlags.classList.toggle("hidden", s.meterFlags.length === 0);
   els.rangeOut.textContent = s.range;
   els.countOut.textContent = samples.length.toLocaleString();
 
@@ -600,6 +620,7 @@ function classForByte(i, base, L) {
   if (i === L.modeIdx) return "b-mode";
   if (i === L.rangeIdx) return "b-rng";
   if (i >= L.valueStart && i <= L.valueEnd) return "b-val";
+  if (i === L.flagsIdx) return "b-flg";
   if (i === L.signIdx) return "b-sgn";
   return "";
 }
@@ -986,6 +1007,7 @@ function renderAlignment(s) {
     "  \u00b7  range@" + L.rangeIdx +
     "  \u00b7  sep@" + L.sepIdx + "='" + String.fromCharCode(b_sep(L)) + "'" +
     "  \u00b7  value@" + L.valueStart + "\u2013" + L.valueEnd +
+    "  \u00b7  flags@" + L.flagsIdx + "=0x" + hex(s.flagByte) +
     "  \u00b7  sign@" + L.signIdx;
   els.align.className = "align";
 }

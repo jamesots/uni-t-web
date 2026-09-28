@@ -50,6 +50,8 @@ Visit https://jamesots.github.io/uni-t-web/
   page reconnects on load and on hotplug, with no clicking. The *Connect
   meter* button only appears when a grant is still needed, because
   `requestDevice()` requires a user gesture.
+- **Meter annunciators.** HOLD, REL, MIN and MAX set with the meter's own
+  buttons are shown as a badge beside the mode.
 - **Diagnostics** are collapsed out of the way: the colour-coded raw report,
   and an event log.
 
@@ -125,9 +127,10 @@ Confirmed against a UT61E+ on a CH9329 cable (a negative V DC reading):
 ```
 idx  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10 11 12
      13 ab cd 10 02 30 2d 30 2e 30 30 30 32 00 00 30 30 31 03
-      |  |  |  |  |  |  |  `--------- value ---------'  |
-      |  |  |  |  |  |  |         "0.0002"              |
-      |  |  |  |  |  |  `- sign separator               `- sign byte, bit 0
+      |  |  |  |  |  |  |  `---- value ---'        |     |
+      |  |  |  |  |  |  |      "0.0002"            |     |
+      |  |  |  |  |  |  |                          |     `- sign byte, bit 0
+      |  |  |  |  |  |  `- sign separator          `- meter flags
       |  |  |  |  |  `- range, low nibble
       |  |  |  |  `- mode (0x02 = V DC)
       |  |  |  `- message length (0x10 = 16 bytes follow)
@@ -142,6 +145,7 @@ idx  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10 11 12
 | +4 | range, low nibble |
 | +5 | sign separator: `0x20` positive, `0x2d` negative |
 | +6…+11 | value, 6 ASCII characters |
+| +14 | meter flags, low nibble: bit 0 REL, bit 1 HOLD, bit 2 MIN, bit 3 MAX |
 | +16 | sign byte, bit 0 set when negative, bit 3 selects AC/DC in auto mode |
 
 Two things to note:
