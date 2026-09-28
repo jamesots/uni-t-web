@@ -519,7 +519,8 @@ let latest = null;        // last parsed report
 let lastGood = null;      // last in-range report; OL carries no resolution
 let heldFrame = null;     // snapshot shown while Hold is on
 let relRef = null;        // relative-mode reference, in base units
-let samples = [];         // { t, v }, v in base units
+let samples = [];         // { t, v, gap? }, v in base units; gap: OL came before it
+let olSince = false;      // OL seen since the last stored sample
 let stats = null;         // { min, max, sum, n, unit }
 let unitKey = null;       // base SI unit; a change resets chart and stats
 let lastFactor = null;    // last range factor, to log autoranges
@@ -651,6 +652,10 @@ function zeroRuns(pts) {
   const runs = [];
   let start = -1;
   for (let i = 0; i <= pts.length; i++) {
+    if (i < pts.length && pts[i].gap && start >= 0) {
+      if (i - start >= ZERO_RUN_MIN) runs.push({ from: pts[start].t, to: pts[i - 1].t });
+      start = -1;
+    }
     const isZero = i < pts.length && pts[i].v === 0;
     if (isZero && start < 0) start = i;
     if (!isZero && start >= 0) {
@@ -766,30 +771,39 @@ function drawChart() {
     ctx.globalAlpha = 1;
   }
 
-  const trace = () => {
+  // An over-limit spell breaks the trace: each unbroken run of readings is
+  // its own segment, rather than a line bridging the gap.
+  const segments = [];
+  for (const p of pts) {
+    if (p.gap || !segments.length) segments.push([]);
+    segments[segments.length - 1].push(p);
+  }
+  const trace = (seg) => {
     ctx.beginPath();
-    for (let i = 0; i < pts.length; i++) {
-      const x = sx(pts[i].t), y = sy(scale(pts[i].v));
+    for (let i = 0; i < seg.length; i++) {
+      const x = sx(seg[i].t), y = sy(scale(seg[i].v));
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
+    if (seg.length === 1) ctx.lineTo(sx(seg[0].t), sy(scale(seg[0].v)));   // a lone reading draws as a dot
   };
 
   // Area wash under the line, then the line at 2px round.
-  trace();
-  ctx.lineTo(sx(pts[pts.length - 1].t), y1);
-  ctx.lineTo(sx(pts[0].t), y1);
-  ctx.closePath();
   ctx.globalAlpha = 0.1;
   ctx.fillStyle = seriesC;
-  ctx.fill();
+  for (const seg of segments) {
+    trace(seg);
+    ctx.lineTo(sx(seg[seg.length - 1].t), y1);
+    ctx.lineTo(sx(seg[0].t), y1);
+    ctx.closePath();
+    ctx.fill();
+  }
   ctx.globalAlpha = 1;
 
-  trace();
   ctx.strokeStyle = seriesC;
   ctx.lineWidth = 2;
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
-  ctx.stroke();
+  for (const seg of segments) { trace(seg); ctx.stroke(); }
   ctx.restore();
 
   // Label each zero run once, centred, where there is room for the text.
@@ -885,8 +899,9 @@ function record(s) {
   unitKey = s.group;
 
   // Keep OL out of the chart and stats, and out of range tracking: its frame
-  // has no decimal point, so it says nothing about the resolution.
-  if (!Number.isFinite(s.value)) return;
+  // has no decimal point, so it says nothing about the resolution. The next
+  // stored sample is flagged instead, so the chart leaves a gap.
+  if (!Number.isFinite(s.value)) { olSince = true; return; }
 
   if (lastFactor !== null && s.factor !== lastFactor) {
     if (stats) stats.mixed = true;
@@ -897,7 +912,8 @@ function record(s) {
   lastGood = s;
   els.chartUnit.textContent = s.displayUnit ? "(" + s.displayUnit + ")" : "";
 
-  samples.push({ t: Date.now(), v: s.value });
+  samples.push(olSince ? { t: Date.now(), v: s.value, gap: true } : { t: Date.now(), v: s.value });
+  olSince = false;
   if (samples.length > MAX_SAMPLES) samples.splice(0, samples.length - MAX_SAMPLES);
 
   if (!stats) {
