@@ -104,10 +104,12 @@ class."* WebHID exists for this case and does not blocklist this vendor.
 
 ## CH9329 framing
 
-The page never sends anything to the meter. The CP2110 tools poll with a
-request (`ab cd 03 5e 01 d9`) for every reading, but on this cable readings
-stream unprompted as soon as the meter is on — confirmed with the meter and
-cable power-cycled and no request ever sent.
+The CP2110 tools poll with a request (`ab cd 03 5e 01 d9`) for every reading.
+On some meters readings stream over this cable unprompted as soon as the meter
+is on. Others stay silent until polled, so the page polls: it sends the request
+prefixed with the CH9329 byte count (`06 ab cd 03 5e 01 d9`, padded to the
+64-byte output report), sends the next one as soon as a reply arrives, and
+retries if nothing comes back within 500 ms.
 
 Each reading arrives as `13 ab cd 10 ...`. The cable prefixes it with a byte
 count: `0x13` is 19, the length of the meter's 19-byte message (`ab cd 10`

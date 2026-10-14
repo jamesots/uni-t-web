@@ -1029,10 +1029,31 @@ function checkLiveness() {
 
 // --- Device ---------------------------------------------------------------
 
+// Some meters only answer when polled. The request is the CP2110 tools' poll,
+// prefixed with the CH9329 byte count, padded to the 64-byte output report.
+const POLL_REPORT = new Uint8Array(64);
+POLL_REPORT.set([0x06, 0xab, 0xcd, 0x03, 0x5e, 0x01, 0xd9]);
+let lastPoll = 0;
+let pollTimer = null;
+
+function poll() {
+  if (!device || !device.opened) return;
+  lastPoll = Date.now();
+  device.sendReport(0, POLL_REPORT).catch((err) => log("poll: " + err.message, "e"));
+}
+
+// Ask for the next reading as soon as one arrives; the timer below restarts
+// the loop if a reply is lost.
+function onPollReply() { setTimeout(poll, 0); }
+
 async function attach(dev, how) {
   device = dev;
   if (!device.opened) await device.open();
   device.addEventListener("inputreport", onInputReport);
+  device.addEventListener("inputreport", onPollReply);
+  clearInterval(pollTimer);
+  pollTimer = setInterval(() => { if (Date.now() - lastPoll > 500) poll(); }, 250);
+  poll();
 
   els.connect.classList.add("hidden");
   for (const k of ["hold", "rel", "resetStats", "disconnect"]) {
@@ -1076,6 +1097,9 @@ async function connect(interactive) {
 async function disconnect() {
   if (device) {
     device.removeEventListener("inputreport", onInputReport);
+    device.removeEventListener("inputreport", onPollReply);
+    clearInterval(pollTimer);
+    pollTimer = null;
     try { await device.close(); } catch (err) { /* already gone */ }
     log("closed");
   }
